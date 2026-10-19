@@ -236,6 +236,12 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 .deadline-results .card h3{margin-bottom:12px}
 @media(max-width:850px){.deadline-form{grid-template-columns:repeat(2,minmax(0,1fr))}.deadline-results-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:700px){.deadline-form,.deadline-results-grid,.deadline-workload{grid-template-columns:minmax(0,1fr)}.deadline-form-footer{align-items:stretch;flex-direction:column}.deadline-form-footer .btn{width:100%}.deadline-intro{padding:16px}.deadline-date-line strong{max-width:58%}}
+.course-tools{position:sticky;top:0;z-index:20;background:var(--card,#fff);padding:8px 0 10px;margin-bottom:6px;border-bottom:1px solid var(--line)}
+.course-tools input[type=search]{width:100%;border:1px solid #cbd5e1;border-radius:10px;padding:11px 12px;font-size:15px;background:#fff;color:var(--text)}
+.chips{display:flex;gap:6px;overflow-x:auto;padding:8px 0 2px;-webkit-overflow-scrolling:touch}.chip{flex:0 0 auto;padding:7px 12px;border-radius:99px;background:#eef2ff;color:#3730a3;font-weight:700;font-size:13px;white-space:nowrap}.chip.on{background:#4f46e5;color:#fff}
+.course-row{display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap}.course-row select{border:1px solid #cbd5e1;border-radius:9px;padding:8px;background:#fff;color:var(--text);flex:1;min-width:120px}
+.chapter-toggle{display:flex;align-items:center;gap:10px;width:100%;padding:12px;background:#f8fafc;text-align:left;border:0;font:inherit;color:inherit;cursor:pointer}.sub-toggle{background:transparent;padding:0;flex:1;min-width:0}.caret{width:18px;color:#4f46e5;font-size:16px;flex:0 0 auto}.chapter-body{padding:0 12px 12px}.chapter-body[hidden]{display:none}
+@media print{.chapter-body[hidden]{display:block!important}.course-tools{display:none!important}}
 </style>
 </head>
 <body>
@@ -347,7 +353,12 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 
   <section id="courses" class="page">
     <div class="card">
-      <div class="toolbar"><div><h2>Subjects, Chapters & Lessons</h2><div class="muted">Everything here can be changed to match your child's books.</div></div><button class="btn primary" onclick="addSubject()">＋ Add Subject</button></div>
+      <div class="toolbar"><div><h2>Subjects, Chapters & Lessons</h2><div class="muted">Everything here can be changed to match your books.</div></div><button class="btn primary" onclick="addSubject()">＋ Add Subject</button></div>
+      <div class="course-tools no-print">
+        <input id="courseSearch" type="search" placeholder="🔍 Search chapters, lessons or exercises" aria-label="Search" oninput="courseSearch(this.value)">
+        <div id="coursesFilter" class="chips"></div>
+        <div class="course-row"><select id="courseSort" aria-label="Sort chapters" onchange="setSort(this.value)"><option value="order">Order added</option><option value="az">A → Z</option><option value="incomplete">Incomplete first</option></select><button class="btn small" onclick="expandAll(true)">Expand all</button><button class="btn small" onclick="expandAll(false)">Collapse all</button></div>
+      </div>
       <div id="coursesList"></div>
     </div>
   </section>
@@ -464,6 +475,15 @@ async function installApp(){
  if(deferredPrompt){deferredPrompt.prompt();try{await deferredPrompt.userChoice}catch{}deferredPrompt=null;return}
  nav('settings');const c=document.getElementById('installCard');if(c)c.scrollIntoView({behavior:'smooth'});
 }
+(function storageWarn(){try{
+ try{localStorage.setItem(KEY+'_t','1');localStorage.removeItem(KEY+'_t')}catch{storageOk=false}
+ if(storageOk&&/^https?:$/.test(location.protocol))return;
+ const b=document.createElement('div');
+ b.style.cssText='position:sticky;top:0;z-index:9999;background:#fef3c7;color:#78350f;border-bottom:1px solid #f59e0b;padding:10px 14px;font:14px/1.4 system-ui,sans-serif';
+ b.innerHTML='⚠ <b>Changes may not be remembered</b> when this file is opened from your phone\'s storage. Open the planner from its web link to keep your changes, or use <b>Settings → Save progress into HTML file</b>. <a href="#" style="margin-left:8px;color:#78350f;font-weight:700">Dismiss</a>';
+ b.querySelector('a').onclick=e=>{e.preventDefault();b.remove()};
+ document.body.insertBefore(b,document.body.firstChild);
+}catch(e){}})();
 (function pwaSetup(){try{
  if(isStandalone()){const b=document.getElementById('installBtn');if(b)b.style.display='none'}
  if(location.protocol==='file:')return;
@@ -754,21 +774,43 @@ function renderDeadlinePlan(){
   </div>`;
 }
 
+let UI=(()=>{try{return JSON.parse(localStorage.getItem(KEY+'_ui'))}catch{return null}})()||{sub:'all',sort:'order',open:{},closed:{}};
+UI.open=UI.open||{};UI.closed=UI.closed||{};
+function saveUI(){try{localStorage.setItem(KEY+'_ui',JSON.stringify(UI))}catch{}}
+let COURSE_Q='';
+function courseSearch(v){COURSE_Q=v.trim().toLowerCase();renderCourses()}
+function setSub(v){UI.sub=v;saveUI();renderCourses()}
+function setSort(v){UI.sort=v;saveUI();renderCourses()}
+function toggleCh(id){UI.open[id]=!UI.open[id];saveUI();renderCourses()}
+function toggleSub(id){UI.closed[id]=!UI.closed[id];saveUI();renderCourses()}
+function expandAll(o){state.subjects.forEach(s=>{if(UI.sub==='all'||UI.sub===s.id){UI.closed[s.id]=false;s.chapters.forEach(c=>{UI.open[c.id]=o})}});saveUI();renderCourses()}
 function renderCourses(){
- const el=document.getElementById('coursesList');
+ const el=document.getElementById('coursesList'),q=COURSE_Q,f=document.getElementById('coursesFilter');
+ if(UI.sub!=='all'&&!findSubject(UI.sub))UI.sub='all';
+ if(f){f.innerHTML=`<button class="chip ${UI.sub==='all'?'on':''}" onclick="setSub('all')">All</button>`+state.subjects.map(s=>`<button class="chip ${UI.sub===s.id?'on':''}" onclick="setSub('${s.id}')">${esc(s.name)}</button>`).join('');const so=document.getElementById('courseSort');if(so)so.value=UI.sort}
  if(!state.subjects.length){el.innerHTML='<div class="empty">No subjects. Click Add Subject.</div>';return}
- el.innerHTML=state.subjects.map((s,si)=>{let st=subjectStats(s);return `<div class="subject-card card" style="box-shadow:none">
- <div class="subject-title"><div style="flex:1"><h3>${esc(s.name)}</h3><div class="progress" style="margin-top:7px"><i style="width:${st.p}%"></i></div><small class="muted">${st.done}/${st.total} study units completed • ${st.p}%</small></div>
+ const html=state.subjects.filter(s=>UI.sub==='all'||s.id===UI.sub).map(s=>{
+  let chs=s.chapters.slice();
+  if(UI.sort==='az')chs.sort((x,y)=>x.name.localeCompare(y.name,undefined,{numeric:true}));
+  else if(UI.sort==='incomplete')chs.sort((x,y)=>chapterDone(x)-chapterDone(y));
+  const subHit=q&&s.name.toLowerCase().includes(q);
+  if(q&&!subHit)chs=chs.filter(c=>c.name.toLowerCase().includes(q)||c.items.some(i=>i.name.toLowerCase().includes(q)));
+  if(q&&!subHit&&!chs.length)return '';
+  const st=subjectStats(s),closed=!!UI.closed[s.id]&&!q;
+  return `<div class="subject-card card" style="box-shadow:none">
+ <div class="subject-title"><button type="button" class="chapter-toggle sub-toggle" onclick="toggleSub('${s.id}')" aria-expanded="${!closed}"><span class="caret">${closed?'▸':'▾'}</span><span style="flex:1;min-width:0"><h3>${esc(s.name)}</h3><div class="progress" style="margin-top:7px"><i style="width:${st.p}%"></i></div><small class="muted">${st.done}/${st.total} study units completed • ${st.p}% • ${s.chapters.length} chapter${s.chapters.length===1?'':'s'}</small></span></button>
  <div class="actions no-print"><button class="btn small" onclick="editSubject('${s.id}')">Edit</button><button class="btn danger small" onclick="deleteSubject('${s.id}')">Delete</button></div></div>
- <div class="actions no-print" style="margin-top:10px"><button class="btn small" onclick="addChapter('${s.id}')">＋ Chapter</button></div>
- ${s.chapters.length?s.chapters.map(c=>chapterHTML(s,c)).join(''):'<div class="empty" style="margin-top:10px">No chapters yet.</div>'}
+ ${closed?'':`<div class="actions no-print" style="margin-top:10px"><button class="btn small" onclick="addChapter('${s.id}')">＋ Chapter</button></div>
+ ${chs.length?chs.map(c=>chapterHTML(s,c,q)).join(''):'<div class="empty" style="margin-top:10px">No chapters yet.</div>'}`}
  </div>`}).join('');
+ el.innerHTML=html||'<div class="empty">Nothing matches your search.</div>';
 }
-function chapterHTML(s,c){
+function chapterHTML(s,c,q=''){
  let done=chapterDone(c), items=c.items;
- return `<div class="chapter"><div class="chapter-head"><div><strong>${esc(c.name)}</strong><div class="muted" style="font-size:11px">${items.length?`${items.filter(i=>i.done).length}/${items.length} items completed`:done?'Whole chapter completed':'Whole chapter counts as one study unit'}</div></div><div class="actions no-print"><button class="btn success small" onclick="completeChapter('${s.id}','${c.id}')">${done?'Completed ✓':items.length?'Mark as Complete':'Mark chapter complete'}</button><button class="btn small" onclick="editChapter('${s.id}','${c.id}')">Edit chapter</button><button class="btn danger small" onclick="deleteChapter('${s.id}','${c.id}')">Delete chapter</button></div></div>
+ const open=!!q||!!UI.open[c.id],shown=(q&&!c.name.toLowerCase().includes(q))?items.filter(i=>i.name.toLowerCase().includes(q)):items;
+ return `<div class="chapter"><button type="button" class="chapter-toggle" onclick="toggleCh('${c.id}')" aria-expanded="${open}"><span class="caret">${open?'▾':'▸'}</span><span style="flex:1;min-width:0"><strong>${esc(c.name)}${done?' ✓':''}</strong><span class="muted" style="font-size:11px;display:block">${items.length?`${items.filter(i=>i.done).length}/${items.length} items completed`:done?'Whole chapter completed':'Whole chapter counts as one study unit'}</span></span></button><div class="chapter-body" ${open?'':'hidden'}><div class="actions no-print" style="margin:4px 0 8px"><button class="btn success small" onclick="completeChapter('${s.id}','${c.id}')">${done?'Completed ✓':items.length?'Mark as Complete':'Mark chapter complete'}</button><button class="btn small" onclick="editChapter('${s.id}','${c.id}')">Edit chapter</button><button class="btn danger small" onclick="deleteChapter('${s.id}','${c.id}')">Delete chapter</button></div>
  <div class="quick-add no-print"><div class="quick-add-title">＋ Add lesson or exercise</div><div class="quick-add-row"><input id="new-item-${c.id}" type="text" placeholder="Type a lesson or exercise name" aria-label="New lesson or exercise name" onkeydown="if(event.key==='Enter'){event.preventDefault();quickAddItem('${s.id}','${c.id}')}"/><select id="new-type-${c.id}" aria-label="Item type"><option value="lesson">Lesson</option><option value="exercise">Exercise</option></select><button class="btn primary" onclick="quickAddItem('${s.id}','${c.id}')">Add</button></div><button class="btn small bulk-add" onclick="addMultipleItems('${s.id}','${c.id}')">＋ Add multiple at once</button></div>
- <div class="chapter-items">${items.length?items.map(i=>`<div class="item ${i.done?'done':''}"><input type="checkbox" aria-label="Mark ${esc(i.name)} complete" ${i.done?'checked':''} onchange="toggleItem('${s.id}','${c.id}','${i.id}')"><span class="type ${i.type==='exercise'?'exercise':''}">${i.type}</span><label>${esc(i.name)}</label><div class="actions no-print"><button class="btn small" onclick="editItem('${s.id}','${c.id}','${i.id}')">Edit</button><button class="btn danger small" aria-label="Delete ${esc(i.name)}" title="Delete this item" onclick="deleteItem('${s.id}','${c.id}','${i.id}')">🗑 Delete</button></div></div>`).join(''):'<div class="muted" style="padding:10px 0">No lessons or exercises yet. The whole chapter counts as one study task until you add smaller items. Use the quick-add box above to break it down.</div>'}</div></div>`;
+ <div class="chapter-items">${items.length?shown.map(i=>`<div class="item ${i.done?'done':''}"><input type="checkbox" aria-label="Mark ${esc(i.name)} complete" ${i.done?'checked':''} onchange="toggleItem('${s.id}','${c.id}','${i.id}')"><span class="type ${i.type==='exercise'?'exercise':''}">${i.type}</span><label>${esc(i.name)}</label><div class="actions no-print"><button class="btn small" onclick="editItem('${s.id}','${c.id}','${i.id}')">Edit</button><button class="btn danger small" aria-label="Delete ${esc(i.name)}" title="Delete this item" onclick="deleteItem('${s.id}','${c.id}','${i.id}')">🗑 Delete</button></div></div>`).join(''):'<div class="muted" style="padding:10px 0">No lessons or exercises yet. The whole chapter counts as one study task until you add smaller items. Use the quick-add box above to break it down.</div>'}</div></div></div>`;
 }
 function chapterDone(c){return c.items.length?c.items.every(i=>i.done):!!c.done}
 function findSubject(id){return state.subjects.find(s=>s.id===id)}
@@ -795,7 +837,7 @@ function showTextDialog({title,description='Give it a clear name so you can find
 function addSubject(){showTextDialog({title:'Add a subject',label:'Subject name',placeholder:'e.g. English, Mathematics',confirmText:'Add subject',onSave:n=>{state.subjects.push({id:uid(),name:n,chapters:[]});save();renderAll()}})}
 function editSubject(id){let s=findSubject(id);if(!s)return;showTextDialog({title:'Rename subject',label:'Subject name',value:s.name,confirmText:'Save changes',onSave:n=>{s.name=n;save();renderAll()}})}
 function deleteSubject(id){if(!confirm('Delete this subject and all its chapters?'))return;state.subjects=state.subjects.filter(s=>s.id!==id);save();renderAll()}
-function addChapter(sid){showTextDialog({title:'Add a chapter',description:'Create a unit or chapter to organize your lessons and exercises.',label:'Chapter / unit name',placeholder:'e.g. Chapter 1 — Number Systems',confirmText:'Add chapter',onSave:n=>{findSubject(sid).chapters.push({id:uid(),name:n,items:[]});save();renderAll()}})}
+function addChapter(sid){showTextDialog({title:'Add a chapter',description:'Create a unit or chapter to organize your lessons and exercises.',label:'Chapter / unit name',placeholder:'e.g. Chapter 1 — Number Systems',confirmText:'Add chapter',onSave:n=>{findSubject(sid).chapters.push((()=>{const nc={id:uid(),name:n,items:[]};UI.open[nc.id]=true;saveUI();return nc})());save();renderAll()}})}
 function editChapter(sid,cid){let c=findChapter(sid,cid);if(!c)return;showTextDialog({title:'Edit chapter',label:'Chapter / unit name',value:c.name,confirmText:'Save changes',onSave:n=>{c.name=n;save();renderAll()}})}
 function deleteChapter(sid,cid){if(!confirm('Delete this chapter and its lessons/exercises?'))return;let s=findSubject(sid);s.chapters=s.chapters.filter(c=>c.id!==cid);save();renderAll()}
 function addItem(sid,cid,type){showTextDialog({title:type==='exercise'?'Add an exercise':'Add a lesson',label:type==='exercise'?'Exercise name':'Lesson name',placeholder:type==='exercise'?'e.g. Exercise 1.2, Question 4':'e.g. Introduction to algebra',confirmText:'Add '+(type==='exercise'?'exercise':'lesson'),onSave:n=>{const c=findChapter(sid,cid);c.done=false;c.completedAt=null;c.items.push({id:uid(),name:n,type,done:false,completedAt:null});save();renderAll()}})}
